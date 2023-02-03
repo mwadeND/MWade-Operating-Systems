@@ -1,3 +1,4 @@
 Name: Michael Wade
 Email: mwade@nd.edu
-Level: TODO
+Level: 2
+Citations: Citations are made in code comments as necessary. General knowledge refresh from "geeksforgeeks.org"
