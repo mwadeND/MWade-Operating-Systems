@@ -4,6 +4,8 @@
 #define __PCAP_PROCESS_H
 
 #include <stdint.h>
+#include <pthread.h>
+
 
 #include "packet.h"
 
@@ -36,10 +38,46 @@ struct PacketEntry
     uint32_t        RedundantBytes;
 };
 
-/* Our big table for recalling packets */
-extern struct PacketEntry *    BigTable; 
-extern int    BigTableSize;
-extern int    BigTableNextToReplace;
+// /* Our big table for recalling packets */
+// extern struct PacketEntry *    BigTable; 
+// extern int    BigTableSize;
+// extern int    BigTableNextToReplace;
+
+// 4 tables
+int SmallTableSize;
+struct PacketEntry * Table1;
+int Table1NextToReplace;
+pthread_mutex_t Table1Lock;
+struct PacketEntry * Table2;
+int Table2NextToReplace;
+pthread_mutex_t Table2Lock;
+struct PacketEntry * Table3;
+int Table3NextToReplace;
+pthread_mutex_t Table3Lock;
+struct PacketEntry * Table4;
+int Table4NextToReplace;
+pthread_mutex_t Table4Lock;
+
+struct HashOption
+{
+    struct PacketEntry * Table;
+    int NextToReplace;
+    pthread_mutex_t TableLock;
+};
+
+
+// stack
+#define STACK_MAX_SIZE          10
+
+pthread_mutex_t     StackLock;
+struct Packet *  StackItems[STACK_MAX_SIZE];
+int                 StackSize;
+
+
+pthread_cond_t NotEmptyCond;
+pthread_cond_t NotFullCond;
+
+int KeepGoing;
 
 char initializeProcessing (int TableSize);
 

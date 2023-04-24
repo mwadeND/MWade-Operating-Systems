@@ -16,11 +16,25 @@
 #include "pcap-read.h"
 #include "pcap-process.h"
 
-#define SHOW_DEBUG	1
+#define SHOW_DEBUG	0
 
 
 char parsePcapFileStart (FILE * pTheFile, struct FilePcapInfo * pFileInfo)
 {
+
+	if(pTheFile == NULL)
+	{
+		printf("* Error (parsePcapFileStart): FILE pointer was NULL\n");
+		return 0;
+	}
+
+	if(pFileInfo == NULL)
+	{
+		printf("* Error (parsePcapFileStart): F was NULL\n");
+		return 0;
+	}
+
+
 	// tcpdump header processing
 	//
 	//  Reference of file info available at:
@@ -200,7 +214,17 @@ char readPcapFile (struct FilePcapInfo * pFileInfo)
 
 		if(pPacket != NULL)
 		{
-			processPacket(pPacket);
+			// processPacket(pPacket);
+			// add to queue 
+    		pthread_mutex_lock(&StackLock);
+    		while(StackSize >= STACK_MAX_SIZE){
+				// printf("Stack full\n");
+        		pthread_cond_wait(&NotFullCond, &StackLock);
+			}
+			StackItems[StackSize] = pPacket;
+    		StackSize++;   
+			pthread_cond_signal(&NotEmptyCond);
+    		pthread_mutex_unlock(&StackLock);  
 		}
 
 		/* Allow for an early bail out if specified */
@@ -215,7 +239,7 @@ char readPcapFile (struct FilePcapInfo * pFileInfo)
 
 	fclose(pTheFile);
 
-	printf("File processing complete - %s file read containing %d packets with %d bytes of packet data\n", pFileInfo->FileName, pFileInfo->Packets, pFileInfo->BytesRead);
+	// printf("File processing complete - %s file read containing %d packets with %d bytes of packet data\n", pFileInfo->FileName, pFileInfo->Packets, pFileInfo->BytesRead);
 	return 1;
 }
 

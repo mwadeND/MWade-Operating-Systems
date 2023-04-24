@@ -43,6 +43,11 @@ struct Packet * allocatePacket (uint16_t DataSize)
 
 void discardPacket (struct Packet * pPacket)
 {
+    if(pPacket == NULL)
+    {
+        printf("Error: Attempting to discard a NULL packet struct pointer\n");
+        return;
+    }
     /* Free up the internal buffer */
     if(pPacket->Data != NULL)
     {
