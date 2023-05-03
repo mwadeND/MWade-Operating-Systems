@@ -476,12 +476,183 @@ int fs_read( int inumber, char *data, int length, int offset )
 		otherOffset = 0;
 	}
 
-
-
 	return bytesRead;
 }
 
 int fs_write( int inumber, const char *data, int length, int offset )
 {
-	return 0;
+	if(!mounted){
+		printf("not mounted\n");
+		return 0;
+	}
+	if(inumber <= 0 || inumber > maxInodes) {
+		printf("invalid inumber\n");
+		return 0;
+	}
+	struct fs_inode inode;
+	inode_load(inumber, &inode);
+	if(!inode.isvalid){
+		printf("invalid inode\n");
+		return 0;
+	}
+	// if offset == 0 then free everything 
+	if(offset == 0){
+		// release data
+		int blocksReleased = 0;
+		while (inode.size > 0) {
+			if(blocksReleased < POINTERS_PER_INODE){
+				// release direct 
+				if(inode.direct[blocksReleased] >= nblocks){
+					printf("invalid direct block\n");
+					return 0;
+				}
+				freeBlockBitmap[inode.direct[blocksReleased]] = 0;
+			} else {
+				if(inode.indirect >= nblocks){
+					printf("invalid indirect block\n");
+					return 0;
+				}
+				freeBlockBitmap[inode.indirect] = 0;
+				union fs_block indirBlock;
+				disk_read(thedisk,inode.indirect,indirBlock.data);
+				// for each block pointed to in the indirect block
+				if(indirBlock.pointers[blocksReleased-POINTERS_PER_INODE] >= nblocks) {
+					printf("invalid indirect pointer\n");
+					return 0;
+				}
+				freeBlockBitmap[indirBlock.pointers[blocksReleased-POINTERS_PER_INODE]] = 0;
+			}
+			inode.size -= BLOCK_SIZE;
+			blocksReleased ++;
+		}
+		inode.size = 0;
+	}
+
+	int curBlock = (int) offset / BLOCK_SIZE;
+	int otherOffset = offset % BLOCK_SIZE;
+	int toWrite = length;
+	int written = 0;
+	// if part way through a block (no need to mark as notfree)
+	if(otherOffset){
+		int writing = toWrite;
+		if(writing > BLOCK_SIZE - otherOffset){
+			writing = BLOCK_SIZE - otherOffset;
+		}
+		if(curBlock < POINTERS_PER_INODE){
+			union fs_block dBlock;
+			disk_read(thedisk, inode.direct[curBlock], dBlock.data);
+			strncpy((char * restrict) dBlock.data + otherOffset, data, writing);
+			disk_write(thedisk, inode.direct[curBlock], dBlock.data);
+			toWrite -= writing;
+			curBlock ++;
+			otherOffset = 0;
+			written += writing;
+		} else { // indirect must be valid
+			union fs_block indirBlock;
+			disk_read(thedisk, inode.indirect, indirBlock.data);
+			union fs_block dBlock;
+			disk_read(thedisk, indirBlock.pointers[curBlock - POINTERS_PER_INODE], dBlock.data);
+			strncpy((char * restrict) dBlock.data + otherOffset, data, writing);
+			disk_write(thedisk, inode.direct[curBlock], dBlock.data);
+			toWrite -= writing;
+			curBlock ++;
+			otherOffset = 0;
+			written += writing;
+		}
+	}
+
+	// if need to find free space
+	while (toWrite > 0){
+		int writing = toWrite;
+		if(writing > BLOCK_SIZE){
+			writing = BLOCK_SIZE;
+		}
+		if (curBlock < POINTERS_PER_INODE){
+			// find next free block
+			int i;
+			for (i = 0; i <nblocks; i++){
+				if(!freeBlockBitmap[i]){
+					freeBlockBitmap[i] = 1;
+					break;
+				}
+			}
+			if(i >= nblocks){
+				break;
+			}
+			inode.direct[curBlock] = i;
+			union fs_block dBlock;
+			strncpy((char * restrict) dBlock.data, data + written, writing);
+			disk_write(thedisk, inode.direct[curBlock], dBlock.data);
+			toWrite -= writing;
+			curBlock ++;
+			written += writing;
+		} else if (curBlock == POINTERS_PER_INODE) {
+			// find next free block
+			int i;
+			for (i = 0; i <nblocks; i++){
+				if(!freeBlockBitmap[i]){
+					freeBlockBitmap[i] = 1;
+					break;
+				}
+			}
+			if(i >= nblocks){
+				break;
+			}
+			inode.indirect = i;
+			union fs_block indirBlock;
+			disk_read(thedisk, inode.indirect, indirBlock.data);
+			for (i = 0; i <nblocks; i++){
+				if(!freeBlockBitmap[i]){
+					freeBlockBitmap[i] = 1;
+					break;
+				}
+			}
+			if(i >= nblocks){
+				break;
+			}
+			indirBlock.pointers[curBlock -POINTERS_PER_INODE] = i;
+			disk_write(thedisk, inode.indirect, indirBlock.data);
+			union fs_block dBlock;
+			strncpy((char * restrict) dBlock.data, data + written, writing);
+			disk_write(thedisk, indirBlock.pointers[curBlock - POINTERS_PER_INODE], dBlock.data);
+			toWrite -= writing;
+			curBlock ++;
+			written += writing;
+		} else {
+			union fs_block indirBlock;
+			disk_read(thedisk, inode.indirect, indirBlock.data);
+			int i;
+			for (i = 0; i <nblocks; i++){
+				if(!freeBlockBitmap[i]){
+					freeBlockBitmap[i] = 1;
+					break;
+				}
+			}
+			if(i >= nblocks){
+				break;
+			}
+			indirBlock.pointers[curBlock -POINTERS_PER_INODE] = i;
+			disk_write(thedisk, inode.indirect, indirBlock.data);
+			union fs_block dBlock;
+			strncpy((char * restrict) dBlock.data, data + written, writing);
+			disk_write(thedisk, indirBlock.pointers[curBlock - POINTERS_PER_INODE], dBlock.data);
+			toWrite -= writing;
+			curBlock ++;
+			written += writing;
+		}
+	}
+
+
+	printf("freeBlockBitmap: [%i", freeBlockBitmap[0]);
+
+	for(int i=1; i<nblocks; i++){
+		printf(", %i", freeBlockBitmap[i]);
+	}
+	printf("]\n");
+
+	inode.size = written + offset;
+	inode_save(inumber, &inode);
+	// printf("Written: %i\n", written);
+	return written;
+	
 }
