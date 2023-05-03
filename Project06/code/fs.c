@@ -16,6 +16,29 @@ int mounted = 0;
 int * freeBlockBitmap;
 int maxInodes;
 
+
+// do I need to check for errors here?
+void inode_load(int inumber, struct fs_inode *inode) // note inumber cannot be 0
+{
+	int inodeBlockNumber = (int) (inumber - 1) / INODES_PER_BLOCK;
+	int inodeIndex = (inumber - 1) % INODES_PER_BLOCK;
+	union fs_block iBlock;
+	disk_read(thedisk,inodeBlockNumber+1,iBlock.data);
+	*inode = iBlock.inode[inodeIndex];
+}
+
+void inode_save(int inumber, struct fs_inode *inode)
+{
+	int inodeBlockNumber = (int) (inumber - 1) / INODES_PER_BLOCK;
+	int inodeIndex = (inumber - 1) % INODES_PER_BLOCK;
+	union fs_block iBlock;
+	disk_read(thedisk,inodeBlockNumber+1,iBlock.data);
+	iBlock.inode[inodeIndex] = *inode;
+	disk_write(thedisk,inodeBlockNumber+1,iBlock.data);
+}
+
+
+
 int fs_format()
 {
 	if (!mounted) {
@@ -48,13 +71,12 @@ int fs_format()
 	return 0; // already mounted
 }
 
-void fs_debug() // I may have missinterpreted. Not sure i am supposed to have errors for wrong number of inode blocks etc. TODO: make use size not all directs (see mount)
+void fs_debug() // I may have missinterpreted. Not sure i am supposed to have errors for wrong number of inode blocks etc.
 {
 	union fs_block block;
 
 	disk_read(thedisk,0,block.data);
 	int numBlocks = block.super.nblocks;
-	int numInodes = block.super.ninodeblocks;
 
 	if(block.super.magic == FS_MAGIC){
 		printf("superblock:\n");
@@ -81,40 +103,35 @@ void fs_debug() // I may have missinterpreted. Not sure i am supposed to have er
 		return;
 	}
 
-
-	// for each inode block
-	for(int k=0; k<numInodes; k++) {
-		disk_read(thedisk,k+1,block.data);
-		// for each inode
-		for (int i=0; i<INODES_PER_BLOCK; i++){
-			if(block.inode[i].isvalid){
-				printf("inode %i:\n", i);
-			} else {
-				continue;
-			}
-			if(block.inode[i].size > (numBlocks - 2) * DISK_BLOCK_SIZE || block.inode[i].size < 0) {
+	// for each inode 
+	for (int i=0; i <block.super.ninodes; i++){
+		struct fs_inode inode;
+		inode_load(i + 1, &inode);
+		if(inode.isvalid){
+			printf("inode %i:\n", i + 1);
+			if(inode.size > POINTERS_PER_INODE * BLOCK_SIZE + POINTERS_PER_BLOCK * BLOCK_SIZE || inode.size > (numBlocks - 2) * DISK_BLOCK_SIZE ||inode.size < 0) {
 				printf("error, invalid inode size\n");
 				return;
 			} else {
-				printf("    size: %d bytes\n",block.inode[i].size);
+				printf("    size: %d bytes\n",inode.size);
 			}
-			if(block.inode[i].size){
+			if(inode.size){
 				printf("    direct blocks: ");
 				// for each direct block
-				int32_t sizeUnchecked = block.inode[i].size;
+				int32_t sizeUnchecked = inode.size;
 				for(int j=0; j<POINTERS_PER_INODE; j++){
 					if(sizeUnchecked <= 0){
 						continue;
 					}
 					// if(block.inode[i].direct[j]) {  // this may not be correct
-					printf("%d ",block.inode[i].direct[j]);
+					printf("%d ",inode.direct[j]);
 					sizeUnchecked -= BLOCK_SIZE;
 					// }
 				}
 				printf("\n");
 				if(sizeUnchecked > 0){
-					printf("    indirect block: %d\n",block.inode[i].indirect);
-					disk_read(thedisk, block.inode[i].indirect, block.data);
+					printf("    indirect block: %d\n",inode.indirect);
+					disk_read(thedisk, inode.indirect, block.data);
 					printf("    indirect data blocks: ");
 					for(int l=0; l<POINTERS_PER_BLOCK; l++){
 						if(sizeUnchecked <= 0){
@@ -128,20 +145,69 @@ void fs_debug() // I may have missinterpreted. Not sure i am supposed to have er
 					printf("\n");
 				}
 			}
-			// if(block.inode[i].indirect) {
-			// 	printf("    indirect block: %d\n",block.inode[i].indirect);
-			// 	disk_read(thedisk, block.inode[i].indirect, block.data);
-			// 	printf("    indirect data blocks: ");
-			// 	// for each pointer in the indirect block
-			// 	for(int l=0; l<POINTERS_PER_BLOCK; l++){
-			// 		if(block.pointers[l]) {
-			// 			printf("%d ", block.pointers[l]);
-			// 		}
-			// 	}
-			// 	printf("\n");
-			// }
 		}
 	}
+
+	// // for each inode block
+	// for(int k=0; k<numInodes; k++) {
+	// 	disk_read(thedisk,k+1,block.data);
+	// 	// for each inode
+	// 	for (int i=0; i<INODES_PER_BLOCK; i++){
+	// 		if(block.inode[i].isvalid){
+	// 			printf("inode %i:\n", i);
+	// 		} else {
+	// 			continue;
+	// 		}
+	// 		if(block.inode[i].size > (numBlocks - 2) * DISK_BLOCK_SIZE || block.inode[i].size < 0) {
+	// 			printf("error, invalid inode size\n");
+	// 			return;
+	// 		} else {
+	// 			printf("    size: %d bytes\n",block.inode[i].size);
+	// 		}
+	// 		if(block.inode[i].size){
+	// 			printf("    direct blocks: ");
+	// 			// for each direct block
+	// 			int32_t sizeUnchecked = block.inode[i].size;
+	// 			for(int j=0; j<POINTERS_PER_INODE; j++){
+	// 				if(sizeUnchecked <= 0){
+	// 					continue;
+	// 				}
+	// 				// if(block.inode[i].direct[j]) {  // this may not be correct
+	// 				printf("%d ",block.inode[i].direct[j]);
+	// 				sizeUnchecked -= BLOCK_SIZE;
+	// 				// }
+	// 			}
+	// 			printf("\n");
+	// 			if(sizeUnchecked > 0){
+	// 				printf("    indirect block: %d\n",block.inode[i].indirect);
+	// 				disk_read(thedisk, block.inode[i].indirect, block.data);
+	// 				printf("    indirect data blocks: ");
+	// 				for(int l=0; l<POINTERS_PER_BLOCK; l++){
+	// 					if(sizeUnchecked <= 0){
+	// 						continue;
+	// 					}
+	// 					// if(block.pointers[l]) {
+	// 					printf("%d ", block.pointers[l]);
+	// 					sizeUnchecked -= BLOCK_SIZE;
+	// 					// }
+	// 				}
+	// 				printf("\n");
+	// 			}
+	// 		}
+	// 		// if(block.inode[i].indirect) {
+	// 		// 	printf("    indirect block: %d\n",block.inode[i].indirect);
+	// 		// 	disk_read(thedisk, block.inode[i].indirect, block.data);
+	// 		// 	printf("    indirect data blocks: ");
+	// 		// 	// for each pointer in the indirect block
+	// 		// 	for(int l=0; l<POINTERS_PER_BLOCK; l++){
+	// 		// 		if(block.pointers[l]) {
+	// 		// 			printf("%d ", block.pointers[l]);
+	// 		// 		}
+	// 		// 	}
+	// 		// 	printf("\n");
+	// 		// }
+	// 	}
+	// }
 
 }
 
@@ -235,25 +301,7 @@ int fs_mount()
 	return 1;
 }
 
-// do I need to check for errors here?
-void inode_load(int inumber, struct fs_inode *inode) // note inumber cannot be 0 (thus "(inumber - 1)")
-{
-	int inodeBlockNumber = (int) (inumber - 1) / INODES_PER_BLOCK;
-	int inodeIndex = (inumber - 1) % INODES_PER_BLOCK;
-	union fs_block iBlock;
-	disk_read(thedisk,inodeBlockNumber+1,iBlock.data);
-	inode = &iBlock.inode[inodeIndex];
-}
 
-void inode_save(int inumber, struct fs_inode *inode)
-{
-	int inodeBlockNumber = (int) (inumber - 1) / INODES_PER_BLOCK;
-	int inodeIndex = (inumber - 1) % INODES_PER_BLOCK;
-	union fs_block iBlock;
-	disk_read(thedisk,inodeBlockNumber+1,iBlock.data);
-	iBlock.inode[inodeIndex] = *inode;
-	disk_write(thedisk,inodeBlockNumber+1,iBlock.data);
-}
 
 int fs_create()
 {
@@ -275,6 +323,7 @@ int fs_create()
 	}
 	inode.isvalid = 1;
 	inode.size = 0;
+	inode_save(inumber, &inode);
 
 	return inumber;
 }
