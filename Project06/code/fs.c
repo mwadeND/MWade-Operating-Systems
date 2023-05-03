@@ -15,7 +15,7 @@ extern struct disk *thedisk;
 int mounted = 0;
 int * freeBlockBitmap;
 int maxInodes;
-
+int nblocks;
 
 // do I need to check for errors here?
 void inode_load(int inumber, struct fs_inode *inode) // note inumber cannot be 0
@@ -36,8 +36,6 @@ void inode_save(int inumber, struct fs_inode *inode)
 	iBlock.inode[inodeIndex] = *inode;
 	disk_write(thedisk,inodeBlockNumber+1,iBlock.data);
 }
-
-
 
 int fs_format()
 {
@@ -213,6 +211,10 @@ void fs_debug() // I may have missinterpreted. Not sure i am supposed to have er
 
 int fs_mount()
 {
+	if(mounted){
+		printf("already mounted\n");
+		return 0;
+	}
 	union fs_block sBlock;
 	disk_read(thedisk,0,sBlock.data);
 	
@@ -231,7 +233,7 @@ int fs_mount()
 	for(int i=0; i<sBlock.super.nblocks; i++){
 		freeBlockBitmap[i] = 0;
 	}
-	int32_t nblocks = sBlock.super.nblocks;
+	nblocks = sBlock.super.nblocks;
 	// super block takes the first block
 	freeBlockBitmap[0] = 1;
 	// inodes take the next <i> blocks
@@ -301,8 +303,6 @@ int fs_mount()
 	return 1;
 }
 
-
-
 int fs_create()
 {
 	if(!mounted){
@@ -330,7 +330,63 @@ int fs_create()
 
 int fs_delete( int inumber )
 {
-	return 0;
+	if(!mounted){
+		printf("not mounted\n");
+		return 0;
+	}
+	if(inumber <= 0 || inumber > maxInodes) {
+		printf("invalid inumber\n");
+		return 0;
+	}
+	struct fs_inode inode;
+	inode_load(inumber, &inode);
+	if(!inode.isvalid){
+		printf("invalid inode\n");
+		return 0;
+	}
+	inode.isvalid = 0;
+
+	// release data
+	int blocksReleased = 0;
+	while (inode.size > 0) {
+		if(blocksReleased < POINTERS_PER_INODE){
+			// release direct 
+			if(inode.direct[blocksReleased] >= nblocks){
+				printf("invalid direct block\n");
+				return 0;
+			}
+			freeBlockBitmap[inode.direct[blocksReleased]] = 0;
+		} else {
+			if(inode.indirect >= nblocks){
+				printf("invalid indirect block\n");
+				return 0;
+			}
+			freeBlockBitmap[inode.indirect] = 0;
+			union fs_block indirBlock;
+			disk_read(thedisk,inode.indirect,indirBlock.data);
+			// for each block pointed to in the indirect block
+			if(indirBlock.pointers[blocksReleased-POINTERS_PER_INODE] >= nblocks) {
+				printf("invalid indirect pointer\n");
+				return 0;
+			}
+			freeBlockBitmap[indirBlock.pointers[blocksReleased-POINTERS_PER_INODE]] = 0;
+		}
+		inode.size -= BLOCK_SIZE;
+		blocksReleased ++;
+	}
+
+
+	inode.size = 0;
+	inode_save(inumber, &inode);
+
+	// printf("freeBlockBitmap: [%i", freeBlockBitmap[0]);
+
+	// for(int i=1; i<nblocks; i++){
+	// 	printf(", %i", freeBlockBitmap[i]);
+	// }
+	// printf("]\n");
+
+	return 1;
 }
 
 int fs_getsize( int inumber )
