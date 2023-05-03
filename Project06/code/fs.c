@@ -8,12 +8,40 @@ Make your changes here.
 
 #include <stdio.h>
 #include <stdint.h>
+#include <math.h>
 
 extern struct disk *thedisk;
+int mounted = 0;
 
 int fs_format()
 {
-	return 0;
+	if (!mounted) {
+		union fs_block sblock;
+		sblock.super.magic = FS_MAGIC;
+		sblock.super.nblocks = disk_nblocks(thedisk);
+		sblock.super.ninodeblocks = ceil(disk_nblocks(thedisk)/10);
+		sblock.super.ninodes = INODES_PER_BLOCK * sblock.super.ninodeblocks; // Not sure about this
+		disk_write(thedisk, 0, sblock.data);
+
+		for(int i=0; i <sblock.super.ninodeblocks; i++){
+			union fs_block inodeBlock;
+			disk_read(thedisk,i+1,inodeBlock.data);
+
+			for(int j=0; j<INODES_PER_BLOCK; j++){
+				inodeBlock.inode[j].isvalid = 0;
+				inodeBlock.inode[j].size = 0;
+				for(int k=0; k<POINTERS_PER_INODE; k++){
+					inodeBlock.inode[j].direct[k] = 0;
+				}
+				inodeBlock.inode[j].indirect = 0;
+			}
+			disk_write(thedisk,i+1,inodeBlock.data);
+		}
+
+		return 1; // what could fail?
+	}
+	printf("ALREADY MOUNTED\n");
+	return 0; // already mounted
 }
 
 void fs_debug()
@@ -36,7 +64,7 @@ void fs_debug()
 		printf("error, superblock has wrong nblocks\n");
 		return;
 	}
-	if(block.super.ninodeblocks == 1 + (int) block.super.nblocks / 10){
+	if(block.super.ninodeblocks == ceil(block.super.nblocks / 10)){
 		printf("    %d inode blocks\n",block.super.ninodeblocks);
 	} else {
 		printf("error, incorrect number of inode blocks\n");
@@ -70,7 +98,7 @@ void fs_debug()
 				printf("    direct blocks: ");
 				// for each direct block
 				for(int j=0; j<POINTERS_PER_INODE; j++){
-					if(block.inode[i].direct[j]) {
+					if(block.inode[i].direct[j]) {  // this may not be correct
 						printf("%d ",block.inode[i].direct[j]);
 					}
 				}
@@ -95,6 +123,7 @@ void fs_debug()
 
 int fs_mount()
 {
+	
 	return 0;
 }
 
