@@ -9,9 +9,12 @@ Make your changes here.
 #include <stdio.h>
 #include <stdint.h>
 #include <math.h>
+#include <stdlib.h>
 
 extern struct disk *thedisk;
 int mounted = 0;
+int * freeBlockBitmap;
+
 
 int fs_format()
 {
@@ -30,6 +33,7 @@ int fs_format()
 			for(int j=0; j<INODES_PER_BLOCK; j++){
 				inodeBlock.inode[j].isvalid = 0;
 				inodeBlock.inode[j].size = 0;
+				// May not be needed // TODO
 				for(int k=0; k<POINTERS_PER_INODE; k++){
 					inodeBlock.inode[j].direct[k] = 0;
 				}
@@ -44,7 +48,7 @@ int fs_format()
 	return 0; // already mounted
 }
 
-void fs_debug()
+void fs_debug() // I may have missinterpreted. Not sure i am supposed to have errors for wrong number of inode blocks etc. TODO
 {
 	union fs_block block;
 
@@ -64,12 +68,12 @@ void fs_debug()
 		printf("error, superblock has wrong nblocks\n");
 		return;
 	}
-	if(block.super.ninodeblocks == ceil(block.super.nblocks / 10)){
-		printf("    %d inode blocks\n",block.super.ninodeblocks);
-	} else {
-		printf("error, incorrect number of inode blocks\n");
-		return;
-	}
+	// if(block.super.ninodeblocks == ceil(block.super.nblocks / 10)){
+	printf("    %d inode blocks\n",block.super.ninodeblocks);
+	// } else {
+	// 	printf("error, incorrect number of inode blocks\n");
+	// 	return;
+	// }
 	if(block.super.ninodes == INODES_PER_BLOCK * block.super.ninodeblocks) {
 		printf("    %d inodes\n",block.super.ninodes);
 	} else {
@@ -123,8 +127,96 @@ void fs_debug()
 
 int fs_mount()
 {
+	union fs_block sBlock;
+	disk_read(thedisk,0,sBlock.data);
 	
-	return 0;
+	if(sBlock.super.magic != FS_MAGIC){
+		printf("incorrect magic number\n");
+		return 0;
+	}
+	if(sBlock.super.nblocks != disk_nblocks(thedisk)){
+		printf("number of blocks do not match\n");
+		return 0;
+	}
+	freeBlockBitmap = malloc(sizeof(int) * sBlock.super.nblocks);
+
+	// set all free
+	for(int i=0; i<sBlock.super.nblocks; i++){
+		freeBlockBitmap[i] = 0;
+	}
+	int32_t nblocks = sBlock.super.nblocks;
+	// super block takes the first block
+	freeBlockBitmap[0] = 1;
+	// inodes take the next <i> blocks
+	for(int i=0; i<sBlock.super.ninodeblocks; i++){
+		if(i+1 >= nblocks){
+			printf("invalid inode block\n");
+			return 0;
+		}
+		freeBlockBitmap[i+1] = 1;
+	}
+	// go through the inodes to see what blocks are taken (will be basing all off of the size of the inode)
+	for(int i=0; i<sBlock.super.ninodeblocks; i++){
+		union fs_block iBlock;
+		disk_read(thedisk,i+1,iBlock.data);
+		for(int j=0; j<INODES_PER_BLOCK; j++) {
+			if(iBlock.inode[j].isvalid){
+				int32_t uncountedSize = iBlock.inode[j].size;
+				int blocksCounted = 0;
+				while(uncountedSize > 0) {
+					// if already counted all blocks an inode can possibly reach
+					if(blocksCounted + 1 > POINTERS_PER_INODE + POINTERS_PER_BLOCK){
+						printf("inode too large for this system\n");
+						return 0;
+					}
+					// handle direct blocks first
+					if(blocksCounted < POINTERS_PER_INODE){
+						if(iBlock.inode[j].direct[blocksCounted] >= nblocks){
+							printf("invalid direct block\n");
+							return 0;
+						}
+						freeBlockBitmap[iBlock.inode[j].direct[blocksCounted]] = 1;
+						blocksCounted ++;
+						uncountedSize -= BLOCK_SIZE;
+					} else { // indirect
+						if(iBlock.inode[j].indirect >= nblocks){
+							printf("invalid indirect block\n");
+							return 0;
+						}
+						freeBlockBitmap[iBlock.inode[j].indirect] = 1;
+						union fs_block indirBlock;
+						disk_read(thedisk,iBlock.inode[j].indirect,indirBlock.data);
+						// for each block pointed to in the indirect block
+						if(indirBlock.pointers[blocksCounted-POINTERS_PER_INODE] >= nblocks) {
+							printf("invalid indirect pointer\n");
+							return 0;
+						}
+						freeBlockBitmap[indirBlock.pointers[blocksCounted-POINTERS_PER_INODE]] = 1;
+						blocksCounted ++;
+						uncountedSize -= BLOCK_SIZE;
+
+					}
+				}
+			}
+		}
+	}
+
+
+	printf("freeBlockBitmap: [%i", freeBlockBitmap[0]);
+
+	for(int i=1; i<nblocks; i++){
+		printf(", %i", freeBlockBitmap[i]);
+	}
+	printf("]\n");
+
+	mounted = 1;
+
+	return 1;
+}
+
+void inode_load(int inumber, struct fs_inode *inode)
+{
+	int inodeBlockNumber = (int) inumber / INODES_PER_BLOCK;
 }
 
 int fs_create()
