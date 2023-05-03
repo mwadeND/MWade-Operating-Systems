@@ -391,7 +391,22 @@ int fs_delete( int inumber )
 
 int fs_getsize( int inumber )
 {
-	return 0;
+	if(!mounted){
+		printf("not mounted\n");
+		return -1;
+	}
+	if(inumber <= 0 || inumber > maxInodes) {
+		printf("invalid inumber\n");
+		return -1;
+	}
+	struct fs_inode inode;
+	inode_load(inumber, &inode);
+	if(!inode.isvalid){
+		printf("invalid inode\n");
+		return -1;
+	}
+
+	return inode.size;
 }
 
 int fs_read( int inumber, char *data, int length, int offset )
