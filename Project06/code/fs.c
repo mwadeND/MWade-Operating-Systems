@@ -14,7 +14,7 @@ Make your changes here.
 extern struct disk *thedisk;
 int mounted = 0;
 int * freeBlockBitmap;
-
+int maxInodes;
 
 int fs_format()
 {
@@ -48,7 +48,7 @@ int fs_format()
 	return 0; // already mounted
 }
 
-void fs_debug() // I may have missinterpreted. Not sure i am supposed to have errors for wrong number of inode blocks etc. TODO
+void fs_debug() // I may have missinterpreted. Not sure i am supposed to have errors for wrong number of inode blocks etc. TODO: make use size not all directs (see mount)
 {
 	union fs_block block;
 
@@ -98,28 +98,48 @@ void fs_debug() // I may have missinterpreted. Not sure i am supposed to have er
 			} else {
 				printf("    size: %d bytes\n",block.inode[i].size);
 			}
-			if(block.inode[i].direct[0]){
+			if(block.inode[i].size){
 				printf("    direct blocks: ");
 				// for each direct block
+				int32_t sizeUnchecked = block.inode[i].size;
 				for(int j=0; j<POINTERS_PER_INODE; j++){
-					if(block.inode[i].direct[j]) {  // this may not be correct
-						printf("%d ",block.inode[i].direct[j]);
+					if(sizeUnchecked <= 0){
+						continue;
 					}
+					// if(block.inode[i].direct[j]) {  // this may not be correct
+					printf("%d ",block.inode[i].direct[j]);
+					sizeUnchecked -= BLOCK_SIZE;
+					// }
 				}
 				printf("\n");
-			}
-			if(block.inode[i].indirect) {
-				printf("    indirect block: %d\n",block.inode[i].indirect);
-				disk_read(thedisk, block.inode[i].indirect, block.data);
-				printf("    indirect data blocks: ");
-				// for each pointer in the indirect block
-				for(int l=0; l<POINTERS_PER_BLOCK; l++){
-					if(block.pointers[l]) {
+				if(sizeUnchecked > 0){
+					printf("    indirect block: %d\n",block.inode[i].indirect);
+					disk_read(thedisk, block.inode[i].indirect, block.data);
+					printf("    indirect data blocks: ");
+					for(int l=0; l<POINTERS_PER_BLOCK; l++){
+						if(sizeUnchecked <= 0){
+							continue;
+						}
+						// if(block.pointers[l]) {
 						printf("%d ", block.pointers[l]);
+						sizeUnchecked -= BLOCK_SIZE;
+						// }
 					}
+					printf("\n");
 				}
-				printf("\n");
 			}
+			// if(block.inode[i].indirect) {
+			// 	printf("    indirect block: %d\n",block.inode[i].indirect);
+			// 	disk_read(thedisk, block.inode[i].indirect, block.data);
+			// 	printf("    indirect data blocks: ");
+			// 	// for each pointer in the indirect block
+			// 	for(int l=0; l<POINTERS_PER_BLOCK; l++){
+			// 		if(block.pointers[l]) {
+			// 			printf("%d ", block.pointers[l]);
+			// 		}
+			// 	}
+			// 	printf("\n");
+			// }
 		}
 	}
 
@@ -138,6 +158,7 @@ int fs_mount()
 		printf("number of blocks do not match\n");
 		return 0;
 	}
+	maxInodes = sBlock.super.ninodes;
 	freeBlockBitmap = malloc(sizeof(int) * sBlock.super.nblocks);
 
 	// set all free
@@ -214,6 +235,7 @@ int fs_mount()
 	return 1;
 }
 
+// do I need to check for errors here?
 void inode_load(int inumber, struct fs_inode *inode) // note inumber cannot be 0 (thus "(inumber - 1)")
 {
 	int inodeBlockNumber = (int) (inumber - 1) / INODES_PER_BLOCK;
@@ -235,7 +257,26 @@ void inode_save(int inumber, struct fs_inode *inode)
 
 int fs_create()
 {
-	return 0;
+	if(!mounted){
+		printf("not mounted\n");
+		return 0;
+	}
+	// find first unused inumber (inode invalid)
+	int32_t inumber = 1;
+	struct fs_inode inode;
+	inode_load(inumber, &inode);
+	while(inode.isvalid){
+		inumber ++;
+		if(inumber > maxInodes) {
+			printf("all inodes in use\n");
+			return 0;
+		}
+		inode_load(inumber, &inode);
+	}
+	inode.isvalid = 1;
+	inode.size = 0;
+
+	return inumber;
 }
 
 int fs_delete( int inumber )
