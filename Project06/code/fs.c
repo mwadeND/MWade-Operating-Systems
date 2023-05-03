@@ -10,6 +10,7 @@ Make your changes here.
 #include <stdint.h>
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 
 extern struct disk *thedisk;
 int mounted = 0;
@@ -411,7 +412,73 @@ int fs_getsize( int inumber )
 
 int fs_read( int inumber, char *data, int length, int offset )
 {
-	return 0;
+	if(!mounted){
+		printf("not mounted\n");
+		return 0;
+	}
+	if(inumber <= 0 || inumber > maxInodes) {
+		printf("invalid inumber\n");
+		return 0;
+	}
+	struct fs_inode inode;
+	inode_load(inumber, &inode);
+	if(!inode.isvalid){
+		printf("invalid inode\n");
+		return 0;
+	}
+	if(offset > inode.size){
+		printf("offset places reader outside of readable values\n");
+		return 0;
+	}
+	int bytesRead = inode.size - offset;
+	if(bytesRead > length){
+		bytesRead = length;
+	}
+
+	int toRead = bytesRead;
+	int curBlock = (int) offset / BLOCK_SIZE;
+	int otherOffset = offset % BLOCK_SIZE; 
+	while(toRead > 0) {
+		// length to read
+		int reading = toRead;
+		if(reading >= BLOCK_SIZE - otherOffset){
+			reading = BLOCK_SIZE - otherOffset;
+		}
+		// location to read from
+		union fs_block readBlock;
+		if(curBlock < POINTERS_PER_INODE) {
+			if(inode.direct[curBlock] >= nblocks){
+				printf("invalid  direct block\n");
+				return 0;
+			}
+			disk_read(thedisk,inode.direct[curBlock],readBlock.data);
+		} else {
+			if(inode.indirect >= nblocks){
+				printf("invalid indirect block\n");
+				return 0;
+			}
+			if(curBlock - POINTERS_PER_INODE >= POINTERS_PER_BLOCK){
+				printf("exceeds limit of indirect block\n");
+				return 0;
+			}
+			union fs_block indirBlock;
+			disk_read(thedisk,inode.indirect,indirBlock.data);
+			if(indirBlock.pointers[curBlock - POINTERS_PER_INODE] >= nblocks){
+				printf("invalid indirect pointer block\n");
+				return 0;
+			}
+			disk_read(thedisk,indirBlock.pointers[curBlock - POINTERS_PER_INODE],readBlock.data);
+		}
+		// read block (or less)
+		strncpy(data + bytesRead - toRead, (const char * restrict) readBlock.data + otherOffset, reading);
+		curBlock ++;
+		toRead -= reading;
+		otherOffset = 0;
+	}
+
+
+
+	return bytesRead;
 }
 
 int fs_write( int inumber, const char *data, int length, int offset )
