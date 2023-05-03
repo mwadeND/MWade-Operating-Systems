@@ -202,21 +202,35 @@ int fs_mount()
 	}
 
 
-	printf("freeBlockBitmap: [%i", freeBlockBitmap[0]);
+	// printf("freeBlockBitmap: [%i", freeBlockBitmap[0]);
 
-	for(int i=1; i<nblocks; i++){
-		printf(", %i", freeBlockBitmap[i]);
-	}
-	printf("]\n");
+	// for(int i=1; i<nblocks; i++){
+	// 	printf(", %i", freeBlockBitmap[i]);
+	// }
+	// printf("]\n");
 
 	mounted = 1;
 
 	return 1;
 }
 
-void inode_load(int inumber, struct fs_inode *inode)
+void inode_load(int inumber, struct fs_inode *inode) // note inumber cannot be 0 (thus "(inumber - 1)")
 {
-	int inodeBlockNumber = (int) inumber / INODES_PER_BLOCK;
+	int inodeBlockNumber = (int) (inumber - 1) / INODES_PER_BLOCK;
+	int inodeIndex = (inumber - 1) % INODES_PER_BLOCK;
+	union fs_block iBlock;
+	disk_read(thedisk,inodeBlockNumber+1,iBlock.data);
+	inode = &iBlock.inode[inodeIndex];
+}
+
+void inode_save(int inumber, struct fs_inode *inode)
+{
+	int inodeBlockNumber = (int) (inumber - 1) / INODES_PER_BLOCK;
+	int inodeIndex = (inumber - 1) % INODES_PER_BLOCK;
+	union fs_block iBlock;
+	disk_read(thedisk,inodeBlockNumber+1,iBlock.data);
+	iBlock.inode[inodeIndex] = *inode;
+	disk_write(thedisk,inodeBlockNumber+1,iBlock.data);
 }
 
 int fs_create()
